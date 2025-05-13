@@ -4,16 +4,6 @@
 #include <vector>
 #include <stack>
 
-struct Token
-{
-    enum tokenType {Operand, Operator, Parentheses} type;
-    QString tokenContent;
-    double val;
-
-    Token(tokenType type, const QString& content):type(type),tokenContent(content),val(0){}
-    Token(tokenType type, double value):type(type),tokenContent(QString::number(value)), val(value){}
-
-};
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -74,28 +64,90 @@ void MainWindow::inputPressed()
 }
 
 
+void MainWindow::equalPressed()
+{
+
+    QString displayTxt = ui->Display->text();
+    qDebug()<< (validateString(displayTxt) ? "valid string" : "invalid String");
+
+    if(!validateString(displayTxt))
+        return;
+
+
+    auto myTokens = tokenize(displayTxt);
+    auto postFix = convertToPostFix(myTokens);
+    double result = evaluatePostFix(postFix);
+
+    ui->Display->setText(QString::number(result, 'g', 16));
+
+
+#ifdef DEBUGGIN
+    qDebug()<<" equal sign pressed , evaluate string";
+    qDebug()<<"token size " << myTokens.size();
+    for(const Token& token : myTokens)
+    {
+        qDebug()<< "tokenType " << (token.type == tokenType::Number ? " number" : "operator")
+                 << "token Val = " << token.val << "tokenString = " << token.op;
+    }
+
+    qDebug()<<"postfix size " << postFix.size();
+    for(const Token& token : postFix)
+    {
+        qDebug()<< "tokenType " << (token.type == tokenType::Number ? " number" : "operator")
+                 << "token Val = " << token.val << "tokenString = " << token.op;
+    }
+#endif
+
+}
+
+
 bool MainWindow::validateString(const QString& str)
 {
     QChar firstChar = str.front();
-    if (firstChar == '*' || firstChar == '/' || firstChar == ')')
+    //should not start with operation
+    if (firstChar == '*' || firstChar == '/' || firstChar == ')' || firstChar == '%' || firstChar == '.')
         return false;
     QChar lastChar = str.back();
-    if (lastChar == '*' || lastChar == '/' || lastChar == '(' || lastChar == '-' || lastChar == '+')
+    //should not end with operation
+    if (lastChar == '*' || lastChar == '/' || lastChar == '(' || lastChar == '-' || lastChar == '+' || lastChar == '%' || lastChar == '.')
         return false;
 
     //stack to validate parentheses
     std::stack<QChar> myStack;
+    bool hasDecimal = false;
 
     for(uint8_t i = 0;  i < str.size() ; i++)
     {
+        QChar currentChar = str.at(i);
         //consecutive operators not allowed
-        if(str.at(i) == '*' || str.at(i) == '-' || str.at(i) == '+' || str.at(i) == '/')
+        if(currentChar == '*' || currentChar == '-' || currentChar == '+' || currentChar == '/')
         {
             if ( (i < str.size() - 1) && ( str.at(i + 1) == '*' || str.at(i + 1) == '-' || str.at(i + 1) == '+' || str.at(i + 1) == '/'))
                 return false;
         }
 
-        if(str.at(i) == '(')
+
+        else if(currentChar == '.')
+        {
+            // decimal point should be preceeded and followed by a digit
+            if( !str.at(i + 1).isDigit() || !str.at(i - 1).isDigit())
+                return false;
+            //can only be one decimal point in a number
+            if(hasDecimal)
+                return false;
+
+            hasDecimal = true;
+        }
+
+        else if (currentChar.isDigit())
+        {
+          //if digit is a new number, resert decimal flag
+            if (i == 0 || (!str.at(i - 1).isDigit() && str.at(i - 1) != '.') ) {
+                hasDecimal = false;
+            }
+        }
+
+        else if(currentChar == '(')
         {
             //empty brackets not allowed
             if (i < str.size() - 1 && str.at(i + 1) == ')')
@@ -103,7 +155,7 @@ bool MainWindow::validateString(const QString& str)
 
             myStack.push(str.at(i));
         }
-        else if (str.at(i) == ')')
+        else if (currentChar == ')')
         {
             //closing brackets before opening one
             if(myStack.size() == 0) return false;
@@ -120,34 +172,145 @@ bool MainWindow::validateString(const QString& str)
     return myStack.empty();
 }
 
-void MainWindow::equalPressed()
+
+std::vector<Token> MainWindow::tokenize(const QString& txt)
 {
-    qDebug()<<" equal sign pressed , evaluate string";
-
-    /**
-     * tokenisation : get a list of chars of the string expression
-     * validate the expression : make sure only valid charachters, no consecutive oeprators, no empty brackets, cant start or end with * / , balanced brackets
-     * convert to Reverse polish notation (postfix notation)
-     * evaluate using stack
-     * display value in line edit
-     * */
-
-    QString displayTxt = ui->Display->text();
-    qDebug()<< (validateString(displayTxt) ? "valid string" : "invalid String");
-
-
- /*  std::vector<Token> tokens;
-    tokens.reserve(displayTxt.size());
-
-    for(const QChar& c : displayTxt)
+    std::vector<Token> tokens;
+    QString number;
+    for(const QChar& c : txt)
     {
-        if(c == '*' || c == '/' || c == '-' || c == '+')
+        if(c.isDigit() || c == '.')
         {
-            tokens.push_back(Token(tokenType::Operator, c));
+            //append it to number
+            number += c;
+        }
+        else if(c == '*' || c == '/' || c == '-' || c == '+' || c == '%' || c == '(' || c == ')')
+        {
+            if(!number.isEmpty())
+            {
+                tokens.push_back({tokenType::Number, number.toDouble()});
+                number.clear();
+            }
+
+            tokens.push_back({tokenType::Operator, 0, c});
+        }
+
+    }
+
+    //the last characters where digits we need to push the number
+    if(!number.isEmpty())
+    {
+        tokens.push_back({tokenType::Number, number.toDouble()});
+        number.clear();
+    }
+
+    return tokens;
+}
+
+uint8_t precendece(QChar ch)
+{
+    if(ch == '*' || ch == '/')
+        return 2;
+    else if (ch == '+' || ch == '-')
+        return 1;
+
+    return 0;
+}
+
+std::vector<Token> MainWindow::convertToPostFix(const std::vector<Token>& tokens)
+{
+    std::vector<Token> postFixTokens;
+    std::stack<Token> opStack;
+
+    for(const Token& token : tokens)
+    {
+        if(token.type == tokenType::Number)
+        {
+            postFixTokens.push_back(token);
+        }
+
+        else if(token.type == tokenType::Operator)
+        {
+            if(token.op == '(')
+                opStack.push(token);
+
+            else if(token.op == ')')
+            {
+                while( !opStack.empty() && opStack.top().op != '(')
+                {
+                    postFixTokens.push_back(opStack.top());
+                    opStack.pop();
+                }
+                if (!opStack.empty() && opStack.top().op == '(')
+                {
+                    opStack.pop(); // Remove '(' from the stack (but don't add to output)
+                }
+            }
+            else
+            {
+                //if the stack is not empty, and the top element has higher precendence than current operator,
+                while(!opStack.empty() && ( precendece(opStack.top().op) >= precendece(token.op) ) )
+                {
+                    //push top element it into queue
+                    postFixTokens.push_back(opStack.top());
+                    //remove it from stack
+                    opStack.pop();
+                }
+                opStack.push(token);
+            }
+
         }
     }
-*/
+
+    //pop all the remaining operatos from the stack into the queue
+    while(!opStack.empty())
+    {
+        //push it into queue
+        postFixTokens.push_back(opStack.top());
+        //remove it from stack
+        opStack.pop();
+    }
+
+    return postFixTokens;
 }
+
+
+double MainWindow::evaluatePostFix(const std::vector<Token>& postFix)
+{
+
+    std::stack<double> operandsStack;
+
+    for(const Token& token : postFix)
+    {
+        if(token.type == tokenType::Number)
+            operandsStack.push(token.val);
+        else
+        {
+            //top of stack is right operand
+            double b = operandsStack.top();
+            operandsStack.pop();
+
+            double a = operandsStack.top();
+            operandsStack.pop();
+
+            QChar ch = token.op;
+
+            if(ch == '*')
+                operandsStack.push(a * b);
+            else if (ch == '/')
+                operandsStack.push(a/b);
+            else if (ch == '-')
+                operandsStack.push(a-b);
+            else if(ch == '+')
+                operandsStack.push(a+b);
+            else if (ch == '%')
+                operandsStack.push((int)a % (int)b);
+        }
+    }
+
+    return operandsStack.top();
+}
+
 
 void MainWindow::deletePressed()
 {
